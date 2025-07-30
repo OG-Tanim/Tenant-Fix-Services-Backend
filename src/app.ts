@@ -2,8 +2,8 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import router from "./app/routes/index";
-import notFound from "./app/middleware/notFound";
-import globalErrorHandler from "./app/middleware/globalErrorhandler";
+import notFound from "./app/utils/notFound";
+import { globalErrorHandler } from "./app/utils/globalErrorHandler";
 
 dotenv.config();
 
@@ -19,10 +19,10 @@ app.get("/", (req, res) => {
 
 app.use("/api/v1", router);
 
-//Error handling middleware
-app.use(globalErrorHandler);
-
-//404 middleware
+// If no route matches, throw 404
 app.use(notFound);
+
+// Then catch all errors globally
+app.use(globalErrorHandler);
 
 export default app;
