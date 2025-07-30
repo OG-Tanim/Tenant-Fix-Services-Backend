@@ -2,8 +2,8 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import router from "./app/routes/index";
-import notFound from "./app/utils/notFound";
-import { globalErrorHandler } from "./app/utils/globalErrorHandler";
+import notFound from "./app/middleware/notFound";
+import { globalErrorHandler } from "./app/middleware/globalErrorHandler";
 
 dotenv.config();
 

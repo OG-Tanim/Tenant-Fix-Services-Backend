@@ -5,7 +5,7 @@ import {
   handleUncaughtException,
   handleUnhandledRejection,
   handleShutdownSignals,
-} from "./app/utils/globalErrorHandler";
+} from "./app/middleware/globalErrorHandler";
 
 let server: Server;
 
