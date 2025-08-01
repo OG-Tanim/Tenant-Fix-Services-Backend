@@ -1,3 +1,6 @@
+if (process.env.NODE_ENV !== "production") {
+  require("dotenv").config();
+}
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -11,7 +14,7 @@ const app = express();
 
 app.use(cors());
 app.use(express.json({ limit: "10kb" }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: "50kb" }));
 
 app.get("/", (req, res) => {
   res.send("Backend is running");

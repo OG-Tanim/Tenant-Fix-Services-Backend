@@ -10,7 +10,7 @@ import {
   ITenant,
   IManager,
   IContractor,
-} from "../../models/User";
+} from "../../models/user.model";
 import { AppError } from "../../middleware/globalErrorHandler";
 import {
   RegistrationInput,
