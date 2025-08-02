@@ -8,6 +8,7 @@ import {
   LoginInput,
   ChangePasswordInput,
 } from "./auth.validation";
+import tokenManager from "../../utils/tokenManager";
 
 export class AuthController {
   /**
@@ -15,11 +16,19 @@ export class AuthController {
    */
   register = asyncWrapper(async (req: Request, res: Response) => {
     const userData: RegistrationInput = req.body;
+    const deviceInfo = tokenManager.extractDeviceInfo(req);
 
-    const { user, token } = await authService.register(userData);
+    const { user, accessToken, refreshToken } = await authService.register(userData, deviceInfo);
 
-    // Set token in cookie (optional)
-    res.cookie("token", token, {
+    // Set tokens in cookies
+    res.cookie("accessToken", accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 15 * 60 * 1000, // 15 minutes
+    });
+
+    res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
@@ -30,7 +39,8 @@ export class AuthController {
       res,
       {
         user,
-        token,
+        accessToken,
+        refreshToken,
       },
       {
         message: `${user.role.charAt(0).toUpperCase() + user.role.slice(1)} registered successfully`,
@@ -43,11 +53,19 @@ export class AuthController {
    */
   login = asyncWrapper(async (req: Request, res: Response) => {
     const loginData: LoginInput = req.body;
+    const deviceInfo = tokenManager.extractDeviceInfo(req);
 
-    const { user, token } = await authService.login(loginData);
+    const { user, accessToken, refreshToken } = await authService.login(loginData, deviceInfo);
 
-    // Set token in cookie (optional)
-    res.cookie("token", token, {
+    // Set tokens in cookies
+    res.cookie("accessToken", accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 15 * 60 * 1000, // 15 minutes
+    });
+
+    res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
@@ -58,7 +76,8 @@ export class AuthController {
       res,
       {
         user,
-        token,
+        accessToken,
+        refreshToken,
       },
       200,
       {
@@ -68,13 +87,84 @@ export class AuthController {
   });
 
   /**
+   * Refresh access token
+   */
+  refreshToken = asyncWrapper(async (req: Request, res: Response) => {
+    const { refreshToken: refreshTokenFromBody } = req.body;
+    const refreshTokenFromCookie = req.cookies?.refreshToken;
+    const deviceInfo = tokenManager.extractDeviceInfo(req);
+
+    const refreshToken = refreshTokenFromBody || refreshTokenFromCookie;
+
+    if (!refreshToken) {
+      throw new AppError("Refresh token is required", 400, "REFRESH_TOKEN_REQUIRED");
+    }
+
+    const { accessToken, refreshToken: newRefreshToken } = await authService.refreshToken(
+      refreshToken,
+      deviceInfo
+    );
+
+    // Set new tokens in cookies
+    res.cookie("accessToken", accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 15 * 60 * 1000, // 15 minutes
+    });
+
+    res.cookie("refreshToken", newRefreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    sendResponse.success(
+      res,
+      {
+        accessToken,
+        refreshToken: newRefreshToken,
+      },
+      200,
+      {
+        message: "Token refreshed successfully",
+      }
+    );
+  });
+  /**
    * Logout user
    */
   logout = asyncWrapper(async (req: Request, res: Response) => {
-    // Clear token cookie
-    res.clearCookie("token");
+    const { refreshToken: refreshTokenFromBody } = req.body;
+    const refreshTokenFromCookie = req.cookies?.refreshToken;
+
+    const refreshToken = refreshTokenFromBody || refreshTokenFromCookie;
+
+    if (refreshToken) {
+      await authService.logout(refreshToken);
+    }
+
+    // Clear token cookies
+    res.clearCookie("accessToken");
+    res.clearCookie("refreshToken");
 
     sendResponse.message(res, "Logout successful");
+  });
+
+  /**
+   * Logout from all devices
+   */
+  logoutAllDevices = asyncWrapper(async (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
+
+    await authService.logoutAllDevices(userId);
+
+    // Clear token cookies
+    res.clearCookie("accessToken");
+    res.clearCookie("refreshToken");
+
+    sendResponse.message(res, "Logged out from all devices successfully");
   });
 
   /**
@@ -123,11 +213,38 @@ export class AuthController {
     const userId = (req as any).user.id;
 
     await authService.deactivateAccount(userId);
+    await authService.logoutAllDevices(userId);
 
-    // Clear token cookie
-    res.clearCookie("token");
+    // Clear token cookies
+    res.clearCookie("accessToken");
+    res.clearCookie("refreshToken");
 
     sendResponse.message(res, "Account deactivated successfully");
+  });
+
+  /**
+   * Get user active sessions
+   */
+  getSessions = asyncWrapper(async (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
+
+    const sessions = await authService.getUserSessions(userId);
+
+    sendResponse.success(res, sessions, 200, {
+      message: "Active sessions retrieved successfully",
+    });
+  });
+
+  /**
+   * Revoke specific session
+   */
+  revokeSession = asyncWrapper(async (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
+    const { sessionId } = req.params;
+
+    await authService.revokeSession(userId, sessionId);
+
+    sendResponse.message(res, "Session revoked successfully");
   });
 
   /**

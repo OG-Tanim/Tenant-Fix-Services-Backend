@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from "express";
-import jwt from "jsonwebtoken";
 import { User, IUser } from "../models/user.model";
 import { AppError } from "./globalErrorHandler";
 import { asyncWrapper } from "../utils/asyncWrapper";
+import tokenManager from "../utils/tokenManager";
 
 // Extend Request interface to include user
 declare global {
@@ -28,9 +28,9 @@ export const authenticate = asyncWrapper(
     ) {
       token = req.headers.authorization.split(" ")[1];
     }
-    // Get token from cookie (if using cookie-based auth)
-    else if (req.cookies?.token) {
-      token = req.cookies.token;
+    // Get token from cookie
+    else if (req.cookies?.accessToken) {
+      token = req.cookies.accessToken;
     }
 
     if (!token) {
@@ -38,9 +38,8 @@ export const authenticate = asyncWrapper(
     }
 
     try {
-      // Verify token
-      const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
-      const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
+      // Verify access token
+      const decoded = tokenManager.verifyAccessToken(token);
 
       // Get user from database
       const user = await User.findById(decoded.userId);
@@ -65,17 +64,8 @@ export const authenticate = asyncWrapper(
       req.user = user;
       next();
     } catch (error) {
-      if (error instanceof jwt.JsonWebTokenError) {
-        throw new AppError("Invalid token.", 401, "INVALID_TOKEN");
-      }
-      if (error instanceof jwt.TokenExpiredError) {
-        throw new AppError(
-          "Token has expired. Please login again.",
-          401,
-          "TOKEN_EXPIRED"
-        );
-      }
-      throw error;
+      // TokenManager already throws appropriate AppErrors
+      next(error);
     }
   }
 );
@@ -118,14 +108,13 @@ export const optionalAuth = asyncWrapper(
       token = req.headers.authorization.split(" ")[1];
     }
     // Get token from cookie
-    else if (req.cookies?.token) {
-      token = req.cookies.token;
+    else if (req.cookies?.accessToken) {
+      token = req.cookies.accessToken;
     }
 
     if (token) {
       try {
-        const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
-        const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
+        const decoded = tokenManager.verifyAccessToken(token);
 
         const user = await User.findById(decoded.userId);
 

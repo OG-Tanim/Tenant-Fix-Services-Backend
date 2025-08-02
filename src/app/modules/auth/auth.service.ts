@@ -1,5 +1,4 @@
 import bcrypt from "bcrypt";
-import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import {
   User,
@@ -18,19 +17,18 @@ import {
   ChangePasswordInput,
 } from "./auth.validation";
 import { userResponses } from "../../utils/responseHelper";
+import tokenManager, { DeviceInfo } from "../../utils/tokenManager";
 
 export class AuthService {
-  private readonly JWT_SECRET: string =
-    process.env.JWT_SECRET || "your-secret-key";
-  private readonly JWT_EXPIRES_IN: string = process.env.JWT_EXPIRES_IN || "7d";
   private readonly BCRYPT_ROUNDS = 12;
 
   /**
    * Register a new user based on their role
    */
   async register(
-    userData: RegistrationInput
-  ): Promise<{ user: IUser; token: string }> {
+    userData: RegistrationInput,
+    deviceInfo?: DeviceInfo
+  ): Promise<{ user: IUser; accessToken: string; refreshToken: string }> {
     // Check if user already exists
     const existingUser = await User.findOne({
       $or: [{ email: userData.email }, { phone: userData.phone }],
@@ -87,20 +85,27 @@ export class AuthService {
 
     await user.save();
 
-    // Generate JWT token
-    const token = this.generateToken(user._id.toString());
+    // Generate token pair
+    const { accessToken, refreshToken } = await tokenManager.generateTokenPair(user, deviceInfo);
 
     // Remove password from response
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password, ...userResponse } = user.toObject();
 
-    return { user: userResponse as unknown as IUser, token };
+    return { 
+      user: userResponse as unknown as IUser, 
+      accessToken, 
+      refreshToken 
+    };
   }
 
   /**
    * Login user
    */
-  async login(loginData: LoginInput): Promise<{ user: IUser; token: string }> {
+  async login(
+    loginData: LoginInput,
+    deviceInfo?: DeviceInfo
+  ): Promise<{ user: IUser; accessToken: string; refreshToken: string }> {
     // Find user and include password for comparison
     const user = await User.findOne({ email: loginData.email }).select(
       "+password"
@@ -137,14 +142,42 @@ export class AuthService {
       );
     }
 
-    // Generate JWT token
-    const token = this.generateToken(user._id.toString());
+    // Generate token pair
+    const { accessToken, refreshToken } = await tokenManager.generateTokenPair(user, deviceInfo);
 
     // Remove password from response
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password, ...userResponse } = user.toObject();
 
-    return { user: userResponse as unknown as IUser, token };
+    return { 
+      user: userResponse as unknown as IUser, 
+      accessToken, 
+      refreshToken 
+    };
+  }
+
+  /**
+   * Refresh access token
+   */
+  async refreshToken(
+    refreshToken: string,
+    deviceInfo?: DeviceInfo
+  ): Promise<{ accessToken: string; refreshToken: string }> {
+    return tokenManager.refreshAccessToken(refreshToken, deviceInfo);
+  }
+
+  /**
+   * Logout user (revoke refresh token)
+   */
+  async logout(refreshToken: string): Promise<void> {
+    await tokenManager.revokeRefreshToken(refreshToken);
+  }
+
+  /**
+   * Logout from all devices
+   */
+  async logoutAllDevices(userId: string): Promise<void> {
+    await tokenManager.revokeAllUserTokens(userId);
   }
 
   /**
@@ -293,46 +326,17 @@ export class AuthService {
   }
 
   /**
-   * Verify JWT token and return user
+   * Get user active sessions
    */
-  async verifyToken(token: string): Promise<IUser> {
-    try {
-      const decoded = jwt.verify(token, this.JWT_SECRET) as { userId: string };
-      const user = await User.findById(decoded.userId);
-
-      if (!user) {
-        throw new AppError("User not found", 404, "USER_NOT_FOUND");
-      }
-
-      if (!user.isActive) {
-        throw new AppError(
-          "Account has been deactivated",
-          401,
-          "ACCOUNT_DEACTIVATED"
-        );
-      }
-
-      return user;
-    } catch (error) {
-      if (error instanceof jwt.JsonWebTokenError) {
-        throw new AppError("Invalid token", 401, "INVALID_TOKEN");
-      }
-      if (error instanceof jwt.TokenExpiredError) {
-        throw new AppError("Token has expired", 401, "TOKEN_EXPIRED");
-      }
-      throw error;
-    }
+  async getUserSessions(userId: string) {
+    return tokenManager.getUserActiveSessions(userId);
   }
 
   /**
-   * Generate JWT token
+   * Revoke specific session
    */
-  private generateToken(userId: string): string {
-    return jwt.sign(
-      { userId },
-      this.JWT_SECRET as string,
-      { expiresIn: this.JWT_EXPIRES_IN } as jwt.SignOptions
-    );
+  async revokeSession(userId: string, sessionId: string): Promise<void> {
+    await tokenManager.revokeSession(userId, sessionId);
   }
 
   /**

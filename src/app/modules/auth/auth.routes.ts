@@ -24,6 +24,7 @@ router.post(
   authController.register
 );
 router.post("/login", validateRequest(loginSchema), authController.login);
+router.post("/refresh-token", authController.refreshToken);
 router.post("/logout", authController.logout);
 
 // Protected routes - require authentication
@@ -69,6 +70,11 @@ router.patch(
 
 // Account management
 router.delete("/deactivate", authController.deactivateAccount);
+router.post("/logout-all", authController.logoutAllDevices);
+
+// Session management
+router.get("/sessions", authController.getSessions);
+router.delete("/sessions/:sessionId", authController.revokeSession);
 
 // Search and listing routes
 router.get("/contractors/search", authController.searchContractors);
