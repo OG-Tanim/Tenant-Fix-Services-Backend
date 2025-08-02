@@ -114,11 +114,6 @@ export const changePasswordSchema = z.object({
     .max(128, "New password cannot exceed 128 characters"),
 });
 
-// Refresh token validation
-export const refreshTokenSchema = z.object({
-  refreshToken: z.string().min(1, "Refresh token is required"),
-});
-
 // Update profile validation schemas
 export const updateTenantProfileSchema = z.object({
   name: z.string().min(1, "Name is required").max(100).trim().optional(),
@@ -220,4 +215,3 @@ export type PasswordResetRequestInput = z.infer<
 >;
 export type PasswordResetInput = z.infer<typeof passwordResetSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
-export type RefreshTokenInput = z.infer<typeof refreshTokenSchema>;
