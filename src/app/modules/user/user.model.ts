@@ -9,6 +9,8 @@ export interface IUser extends Document {
   email: string;
   image?: string;
   password: string;
+  refreshToken?: string;
+  refreshTokenExpiresAt?: Date;
   isActive: boolean;
   isVerified: boolean;
   createdAt: Date;
@@ -93,6 +95,14 @@ export const userSchema = new Schema(
       required: [true, "Password is required"],
       minlength: [6, "Password must be at least 6 characters long"],
       select: false, // Don't include password in queries by default
+    },
+    refreshToken: {
+      type: String,
+      select: false, // Don't include refresh token in queries by default
+    },
+    refreshTokenExpiresAt: {
+      type: Date,
+      select: false,
     },
     isActive: {
       type: Boolean,

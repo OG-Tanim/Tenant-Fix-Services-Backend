@@ -16,10 +16,18 @@ export class AuthController {
   register = asyncWrapper(async (req: Request, res: Response) => {
     const userData: RegistrationInput = req.body;
 
-    const { user, token } = await authService.register(userData);
+    const { user, accessToken, refreshToken } =
+      await authService.register(userData);
 
-    // Set token in cookie (optional)
-    res.cookie("token", token, {
+    // Set tokens in cookies
+    res.cookie("accessToken", accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 15 * 60 * 1000, // 15 minutes
+    });
+
+    res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
@@ -30,7 +38,7 @@ export class AuthController {
       res,
       {
         user,
-        token,
+        accessToken,
       },
       {
         message: `${user.role.charAt(0).toUpperCase() + user.role.slice(1)} registered successfully`,
@@ -44,10 +52,18 @@ export class AuthController {
   login = asyncWrapper(async (req: Request, res: Response) => {
     const loginData: LoginInput = req.body;
 
-    const { user, token } = await authService.login(loginData);
+    const { user, accessToken, refreshToken } =
+      await authService.login(loginData);
 
-    // Set token in cookie (optional)
-    res.cookie("token", token, {
+    // Set tokens in cookies
+    res.cookie("accessToken", accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 15 * 60 * 1000, // 15 minutes
+    });
+
+    res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
@@ -58,7 +74,7 @@ export class AuthController {
       res,
       {
         user,
-        token,
+        accessToken,
       },
       200,
       {
@@ -71,8 +87,16 @@ export class AuthController {
    * Logout user
    */
   logout = asyncWrapper(async (req: Request, res: Response) => {
-    // Clear token cookie
-    res.clearCookie("token");
+    const userId = (req as any).user?.id;
+
+    if (userId) {
+      // Revoke refresh token from database
+      await authService.logout(userId);
+    }
+
+    // Clear token cookies
+    res.clearCookie("accessToken");
+    res.clearCookie("refreshToken");
 
     sendResponse.message(res, "Logout successful");
   });
@@ -88,6 +112,64 @@ export class AuthController {
     sendResponse.success(res, user, 200, {
       message: "Profile retrieved successfully",
     });
+  });
+
+  /**
+   * Refresh access token using refresh token
+   */
+  refreshToken = asyncWrapper(async (req: Request, res: Response) => {
+    let refreshToken: string | undefined;
+
+    // Get refresh token from cookie or body
+    if (req.cookies?.refreshToken) {
+      refreshToken = req.cookies.refreshToken;
+    } else if (req.body.refreshToken) {
+      refreshToken = req.body.refreshToken;
+    }
+
+    if (!refreshToken) {
+      throw new AppError("Refresh token not provided", 401, "NO_REFRESH_TOKEN");
+    }
+
+    const { accessToken, user } = await authService.refreshToken(refreshToken);
+
+    // Set new access token in cookie
+    res.cookie("accessToken", accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 15 * 60 * 1000, // 15 minutes
+    });
+
+    sendResponse.success(
+      res,
+      {
+        user,
+        accessToken,
+      },
+      200,
+      {
+        message: "Token refreshed successfully",
+      }
+    );
+  });
+
+  /**
+   * Logout from all devices
+   */
+  logoutFromAllDevices = asyncWrapper(async (req: Request, res: Response) => {
+    const userId = (req as any).user?.id;
+
+    if (userId) {
+      // Revoke all refresh tokens from database
+      await authService.logoutFromAllDevices(userId);
+    }
+
+    // Clear token cookies
+    res.clearCookie("accessToken");
+    res.clearCookie("refreshToken");
+
+    sendResponse.message(res, "Logged out from all devices successfully");
   });
 
   /**
@@ -124,8 +206,9 @@ export class AuthController {
 
     await authService.deactivateAccount(userId);
 
-    // Clear token cookie
-    res.clearCookie("token");
+    // Clear token cookies
+    res.clearCookie("accessToken");
+    res.clearCookie("refreshToken");
 
     sendResponse.message(res, "Account deactivated successfully");
   });
@@ -197,5 +280,4 @@ export class AuthController {
     });
   });
 }
-
 export default new AuthController();

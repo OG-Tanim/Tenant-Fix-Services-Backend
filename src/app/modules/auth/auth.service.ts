@@ -10,7 +10,7 @@ import {
   ITenant,
   IManager,
   IContractor,
-} from "../../models/user.model";
+} from "../user/user.model";
 import { AppError } from "../../middleware/globalErrorHandler";
 import {
   RegistrationInput,
@@ -18,6 +18,7 @@ import {
   ChangePasswordInput,
 } from "./auth.validation";
 import { userResponses } from "../../utils/responseHelper";
+import tokenService, { TokenPair } from "../../services/token.service";
 
 export class AuthService {
   private readonly JWT_SECRET: string =
@@ -30,7 +31,7 @@ export class AuthService {
    */
   async register(
     userData: RegistrationInput
-  ): Promise<{ user: IUser; token: string }> {
+  ): Promise<{ user: IUser; accessToken: string; refreshToken: string }> {
     // Check if user already exists
     const existingUser = await User.findOne({
       $or: [{ email: userData.email }, { phone: userData.phone }],
@@ -87,20 +88,32 @@ export class AuthService {
 
     await user.save();
 
-    // Generate JWT token
-    const token = this.generateToken(user._id.toString());
+    // Generate token pair
+    const { accessToken, refreshToken } = tokenService.generateTokenPair(
+      user._id.toString(),
+      user.role
+    );
+
+    // Store refresh token
+    await tokenService.storeRefreshToken(user._id.toString(), refreshToken);
 
     // Remove password from response
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password, ...userResponse } = user.toObject();
 
-    return { user: userResponse as unknown as IUser, token };
+    return {
+      user: userResponse as unknown as IUser,
+      accessToken,
+      refreshToken,
+    };
   }
 
   /**
    * Login user
    */
-  async login(loginData: LoginInput): Promise<{ user: IUser; token: string }> {
+  async login(
+    loginData: LoginInput
+  ): Promise<{ user: IUser; accessToken: string; refreshToken: string }> {
     // Find user and include password for comparison
     const user = await User.findOne({ email: loginData.email }).select(
       "+password"
@@ -137,14 +150,24 @@ export class AuthService {
       );
     }
 
-    // Generate JWT token
-    const token = this.generateToken(user._id.toString());
+    // Generate token pair
+    const { accessToken, refreshToken } = tokenService.generateTokenPair(
+      user._id.toString(),
+      user.role
+    );
+
+    // Store refresh token
+    await tokenService.storeRefreshToken(user._id.toString(), refreshToken);
 
     // Remove password from response
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password, ...userResponse } = user.toObject();
 
-    return { user: userResponse as unknown as IUser, token };
+    return {
+      user: userResponse as unknown as IUser,
+      accessToken,
+      refreshToken,
+    };
   }
 
   /**
@@ -293,39 +316,53 @@ export class AuthService {
   }
 
   /**
-   * Verify JWT token and return user
+   * Verify access token and return user
    */
-  async verifyToken(token: string): Promise<IUser> {
-    try {
-      const decoded = jwt.verify(token, this.JWT_SECRET) as { userId: string };
-      const user = await User.findById(decoded.userId);
+  async verifyAccessToken(token: string): Promise<IUser> {
+    const decoded = tokenService.verifyAccessToken(token);
+    const user = await User.findById(decoded.userId);
 
-      if (!user) {
-        throw new AppError("User not found", 404, "USER_NOT_FOUND");
-      }
-
-      if (!user.isActive) {
-        throw new AppError(
-          "Account has been deactivated",
-          401,
-          "ACCOUNT_DEACTIVATED"
-        );
-      }
-
-      return user;
-    } catch (error) {
-      if (error instanceof jwt.JsonWebTokenError) {
-        throw new AppError("Invalid token", 401, "INVALID_TOKEN");
-      }
-      if (error instanceof jwt.TokenExpiredError) {
-        throw new AppError("Token has expired", 401, "TOKEN_EXPIRED");
-      }
-      throw error;
+    if (!user) {
+      throw new AppError("User not found", 404, "USER_NOT_FOUND");
     }
+
+    if (!user.isActive) {
+      throw new AppError(
+        "Account has been deactivated",
+        401,
+        "ACCOUNT_DEACTIVATED"
+      );
+    }
+
+    return user;
   }
 
   /**
-   * Generate JWT token
+   * Refresh access token using refresh token
+   */
+  async refreshToken(
+    refreshToken: string
+  ): Promise<{ accessToken: string; user: IUser }> {
+    return await tokenService.refreshAccessToken(refreshToken);
+  }
+
+  /**
+   * Logout user and revoke refresh token
+   */
+  async logout(userId: string): Promise<void> {
+    await tokenService.revokeRefreshToken(userId);
+  }
+
+  /**
+   * Logout from all devices (revoke all refresh tokens)
+   */
+  async logoutFromAllDevices(userId: string): Promise<void> {
+    await tokenService.revokeAllRefreshTokens(userId);
+  }
+
+  /**
+   * Generate JWT token (legacy method for backward compatibility)
+   * @deprecated Use tokenService.generateTokenPair instead
    */
   private generateToken(userId: string): string {
     return jwt.sign(

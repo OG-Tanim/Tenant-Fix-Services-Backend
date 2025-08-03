@@ -24,6 +24,9 @@ router.post(
   authController.register
 );
 router.post("/login", validateRequest(loginSchema), authController.login);
+router.post("/refresh-token", authController.refreshToken);
+
+// Semi-protected routes (can work without authentication but better with it)
 router.post("/logout", authController.logout);
 
 // Protected routes - require authentication
@@ -69,6 +72,7 @@ router.patch(
 
 // Account management
 router.delete("/deactivate", authController.deactivateAccount);
+router.post("/logout-all", authController.logoutFromAllDevices);
 
 // Search and listing routes
 router.get("/contractors/search", authController.searchContractors);

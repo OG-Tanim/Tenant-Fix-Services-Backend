@@ -1,8 +1,9 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import { User, IUser } from "../models/user.model";
+import { User, IUser } from "../modules/user/user.model";
 import { AppError } from "./globalErrorHandler";
 import { asyncWrapper } from "../utils/asyncWrapper";
+import tokenService from "../services/token.service";
 
 // Extend Request interface to include user
 declare global {
@@ -19,28 +20,31 @@ declare global {
  */
 export const authenticate = asyncWrapper(
   async (req: Request, res: Response, next: NextFunction) => {
-    let token: string | undefined;
+    let accessToken: string | undefined;
 
-    // Get token from Authorization header
+    // Get access token from Authorization header
     if (
       req.headers.authorization &&
       req.headers.authorization.startsWith("Bearer")
     ) {
-      token = req.headers.authorization.split(" ")[1];
+      accessToken = req.headers.authorization.split(" ")[1];
     }
-    // Get token from cookie (if using cookie-based auth)
-    else if (req.cookies?.token) {
-      token = req.cookies.token;
+    // Get access token from cookie (if using cookie-based auth)
+    else if (req.cookies?.accessToken) {
+      accessToken = req.cookies.accessToken;
     }
 
-    if (!token) {
-      throw new AppError("Access denied. No token provided.", 401, "NO_TOKEN");
+    if (!accessToken) {
+      throw new AppError(
+        "Access denied. No access token provided.",
+        401,
+        "NO_ACCESS_TOKEN"
+      );
     }
 
     try {
-      // Verify token
-      const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
-      const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
+      // Verify access token using token service
+      const decoded = tokenService.verifyAccessToken(accessToken);
 
       // Get user from database
       const user = await User.findById(decoded.userId);
@@ -65,17 +69,58 @@ export const authenticate = asyncWrapper(
       req.user = user;
       next();
     } catch (error) {
-      if (error instanceof jwt.JsonWebTokenError) {
-        throw new AppError("Invalid token.", 401, "INVALID_TOKEN");
-      }
-      if (error instanceof jwt.TokenExpiredError) {
-        throw new AppError(
-          "Token has expired. Please login again.",
-          401,
-          "TOKEN_EXPIRED"
-        );
+      // If access token is expired, try to refresh it automatically
+      if (error instanceof AppError && error.code === "ACCESS_TOKEN_EXPIRED") {
+        return handleTokenRefresh(req, res, next);
       }
       throw error;
+    }
+  }
+);
+
+/**
+ * Handle automatic token refresh
+ */
+const handleTokenRefresh = asyncWrapper(
+  async (req: Request, res: Response, next: NextFunction) => {
+    let refreshToken: string | undefined;
+
+    // Get refresh token from cookie
+    if (req.cookies?.refreshToken) {
+      refreshToken = req.cookies.refreshToken;
+    }
+
+    if (!refreshToken) {
+      throw new AppError(
+        "Access token expired and no refresh token provided. Please login again.",
+        401,
+        "TOKEN_REFRESH_REQUIRED"
+      );
+    }
+
+    try {
+      // Refresh the access token
+      const { accessToken: newAccessToken, user } =
+        await tokenService.refreshAccessToken(refreshToken);
+
+      // Set new access token in cookie
+      res.cookie("accessToken", newAccessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+        maxAge: 15 * 60 * 1000, // 15 minutes
+      });
+
+      // Attach user to request
+      req.user = user;
+      next();
+    } catch (refreshError) {
+      // If refresh token is also invalid/expired, require login
+      throw new AppError(
+        "Session expired. Please login again.",
+        401,
+        "SESSION_EXPIRED"
+      );
     }
   }
 );
@@ -108,33 +153,58 @@ export const authorize = (...roles: string[]) => {
  */
 export const optionalAuth = asyncWrapper(
   async (req: Request, res: Response, next: NextFunction) => {
-    let token: string | undefined;
+    let accessToken: string | undefined;
 
-    // Get token from Authorization header
+    // Get access token from Authorization header
     if (
       req.headers.authorization &&
       req.headers.authorization.startsWith("Bearer")
     ) {
-      token = req.headers.authorization.split(" ")[1];
+      accessToken = req.headers.authorization.split(" ")[1];
     }
-    // Get token from cookie
-    else if (req.cookies?.token) {
-      token = req.cookies.token;
+    // Get access token from cookie
+    else if (req.cookies?.accessToken) {
+      accessToken = req.cookies.accessToken;
     }
 
-    if (token) {
+    if (accessToken) {
       try {
-        const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
-        const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
-
+        const decoded = tokenService.verifyAccessToken(accessToken);
         const user = await User.findById(decoded.userId);
 
         if (user && user.isActive) {
           req.user = user;
         }
       } catch (error) {
-        // Silently ignore token errors for optional auth
-        console.warn("Optional auth token error:", error);
+        // Try to refresh token if access token is expired
+        if (
+          error instanceof AppError &&
+          error.code === "ACCESS_TOKEN_EXPIRED"
+        ) {
+          try {
+            const refreshToken = req.cookies?.refreshToken;
+            if (refreshToken) {
+              const { accessToken: newAccessToken, user } =
+                await tokenService.refreshAccessToken(refreshToken);
+
+              // Set new access token in cookie
+              res.cookie("accessToken", newAccessToken, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === "production",
+                sameSite: "strict",
+                maxAge: 15 * 60 * 1000, // 15 minutes
+              });
+
+              req.user = user;
+            }
+          } catch (refreshError) {
+            // Silently ignore refresh errors for optional auth
+            console.warn("Optional auth refresh error:", refreshError);
+          }
+        } else {
+          // Silently ignore other token errors for optional auth
+          console.warn("Optional auth token error:", error);
+        }
       }
     }
 
