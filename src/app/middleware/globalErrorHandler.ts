@@ -6,7 +6,7 @@ import { MulterError, Multer } from "multer";
 class AppError extends Error {
   public statusCode: number;
   public status: string;
-  public isOperational: boolean;
+  public isOperational: boolean; //expected operational errors or bugs in the code : set as operational in the constructor
   public code?: string;
 
   constructor(message: string, statusCode: number, code?: string) {
@@ -108,7 +108,7 @@ const handleValidationErrorDB = (err: {
 };
 
 /**
- * Handle Joi validation errors
+ * Handle zod validation errors
  */
 const handleZodValidationError = (err: ZodError): AppError => {
   const message = err.issues
